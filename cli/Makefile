@@ -1,6 +1,6 @@
 # To generate compile_commands.json for clangd: make clean && bear -- make
 CC      := clang
-CFLAGS  := -std=c17 -O3 -march=native -Wall -Wextra -Wpedantic
+CFLAGS  := -O3 -march=native -Wall -Wextra -Wpedantic
 INCLUDE := -I..
 TARGET  := rapidhash
 SRC     := rapidhash.c
@@ -16,7 +16,7 @@ $(BUILDDIR)/$(TARGET): $(SRC) ../rapidhash.h | $(BUILDDIR)
 $(BUILDDIR):
 	mkdir -p $(BUILDDIR)
 
-debug: CFLAGS := -std=c17 -g -O0 -fsanitize=address,undefined -Wall -Wextra
+debug: CFLAGS := -g -O0 -fsanitize=address,undefined -Wall -Wextra
 debug: $(BUILDDIR)/$(TARGET)
 
 clean:
