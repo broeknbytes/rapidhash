@@ -19,8 +19,6 @@ $(BUILDDIR):
 debug: CFLAGS := -std=c17 -g -O0 -fsanitize=address,undefined -Wall -Wextra
 debug: $(BUILDDIR)/$(TARGET)
 
-dev: 
-	$(MAKE) --no-print-directory clean && bear -- $(MAKE) --no-print-directory
 clean:
 	rm -rf $(BUILDDIR)
 
