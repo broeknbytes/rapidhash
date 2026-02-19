@@ -1,0 +1,31 @@
+# To generate compile_commands.json for clangd: make clean && bear -- make
+CC      := clang
+CFLAGS  := -std=c17 -O3 -march=native -Wall -Wextra -Wpedantic
+INCLUDE := -I..
+TARGET  := rapidhash
+SRC     := rapidhash.c
+BUILDDIR := build
+
+.PHONY: all clean install debug
+
+all: $(BUILDDIR)/$(TARGET)
+
+$(BUILDDIR)/$(TARGET): $(SRC) ../rapidhash.h | $(BUILDDIR)
+	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $(SRC)
+
+$(BUILDDIR):
+	mkdir -p $(BUILDDIR)
+
+debug: CFLAGS := -std=c17 -g -O0 -fsanitize=address,undefined -Wall -Wextra
+debug: $(BUILDDIR)/$(TARGET)
+
+dev: 
+	$(MAKE) --no-print-directory clean && bear -- $(MAKE) --no-print-directory
+clean:
+	rm -rf $(BUILDDIR)
+
+INSTALL_DIR := $(HOME)/.local/bin
+
+install: $(BUILDDIR)/$(TARGET)
+	mkdir -p $(INSTALL_DIR)
+	install -m 755 $< $(INSTALL_DIR)/$(TARGET)
