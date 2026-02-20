@@ -9,14 +9,13 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-/*
- * Compute the rapidhash of a file.
+/* Compute the rapidhash of a file.
  * Returns 0 on success with hash written to *out,
  * 1 on error (message already printed to stderr).
  * Thread-safe: no shared state.
  */
-static int compute_hash(const char *filename, uint64_t *out)
-{
+
+static int compute_hash(const char *filename, uint64_t *out) {
   int fd = open(filename, O_RDONLY);
   if (fd == -1) {
     perror(filename);
@@ -66,12 +65,7 @@ static int compute_hash(const char *filename, uint64_t *out)
   return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* Sequential path  (-j 1, or only one file)                          */
-/* ------------------------------------------------------------------ */
-
-static int run_sequential(char **files, int nfiles)
-{
+static int run_sequential(char **files, int nfiles) {
   int exit_code = 0;
   for (int i = 0; i < nfiles; i++) {
     uint64_t hash;
@@ -84,20 +78,19 @@ static int run_sequential(char **files, int nfiles)
   return exit_code;
 }
 
-/* ------------------------------------------------------------------ */
-/* Threaded path                                                       */
-/* ------------------------------------------------------------------ */
+/* Threaded path section follows.
+ *
+ */
 
 struct queue {
-  char          **files;
-  int             nfiles;
-  _Atomic int     next;      /* each thread atomically claims the next index */
-  _Atomic int     exit_code; /* set to 1 if any file fails                   */
-  pthread_mutex_t out_mu;    /* serialise stdout so lines don't interleave   */
+  char **files;
+  int nfiles;
+  _Atomic int next;       // Each thread atomically claims the next index
+  _Atomic int exit_code;  // Set to 1 if any file fails
+  pthread_mutex_t out_mu; // Serialise stdout so lines don't interleave
 };
 
-static void *worker(void *arg)
-{
+static void *worker(void *arg) {
   struct queue *q = arg;
   for (;;) {
     int i = atomic_fetch_add(&q->next, 1);
@@ -117,13 +110,12 @@ static void *worker(void *arg)
   return NULL;
 }
 
-static int run_threaded(char **files, int nfiles, int nthreads)
-{
+static int run_threaded(char **files, int nfiles, int nthreads) {
   if (nthreads > nfiles)
     nthreads = nfiles;
 
   struct queue q;
-  q.files  = files;
+  q.files = files;
   q.nfiles = nfiles;
   atomic_init(&q.next, 0);
   atomic_init(&q.exit_code, 0);
@@ -155,16 +147,31 @@ static int run_threaded(char **files, int nfiles, int nthreads)
   return atomic_load(&q.exit_code);
 }
 
-/* ------------------------------------------------------------------ */
-/* main                                                                */
-/* ------------------------------------------------------------------ */
+static void print_help(const char *prog) {
+  printf(
+      "Usage: %s [-j threads] <file> [file...]\n"
+      "\n"
+      "Compute the 64-bit rapidhash of one or more files.\n"
+      "Output format matches sha256sum: '<hash>  <filename>' per line.\n"
+      "\n"
+      "Options:\n"
+      "  -j <n>   Use <n> worker threads for hashing.\n"
+      "           0 means use all available processors (same as the default).\n"
+      "           1 runs in sequential mode without threading overhead.\n"
+      "  -h       Show this help and exit.\n"
+      "\n"
+      "Threading:\n"
+      "  A single file is always hashed on the calling thread.\n"
+      "  With multiple files and no -j flag, all available processors are\n"
+      "  used by default (equivalent to -j 0).\n",
+      prog);
+}
 
-int main(int argc, char **argv)
-{
+int main(int argc, char **argv) {
   int nthreads = (int)sysconf(_SC_NPROCESSORS_ONLN);
 
   int opt;
-  while ((opt = getopt(argc, argv, "j:")) != -1) {
+  while ((opt = getopt(argc, argv, "j:h")) != -1) {
     switch (opt) {
     case 'j': {
       int n = atoi(optarg);
@@ -175,18 +182,21 @@ int main(int argc, char **argv)
       nthreads = (n == 0) ? (int)sysconf(_SC_NPROCESSORS_ONLN) : n;
       break;
     }
+    case 'h':
+      print_help(argv[0]);
+      return 0;
     default:
-      fprintf(stderr, "Usage: %s [-j threads] <file> [file...]\n", argv[0]);
+      print_help(argv[0]);
       return 1;
     }
   }
 
-  char **files  = argv + optind;
-  int    nfiles = argc - optind;
+  char **files = argv + optind;
+  int nfiles = argc - optind;
 
   if (nfiles < 1) {
-    fprintf(stderr, "Usage: %s [-j threads] <file> [file...]\n", argv[0]);
-    return 1;
+    print_help(argv[0]);
+    return 0;
   }
 
   /* -j 1 or a single file: skip all threading machinery */
