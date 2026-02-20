@@ -28,6 +28,20 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  if (st.st_size < 0) {
+    fprintf(stderr, "error: negative file size\n");
+    close(fd);
+    return 1;
+  }
+
+#if SIZE_MAX < INT64_MAX
+  if ((uint64_t)st.st_size > (uint64_t)SIZE_MAX) {
+    fprintf(stderr, "error: file too large for this platform\n");
+    close(fd);
+    return 1;
+  }
+#endif
+
   size_t len = (size_t)st.st_size;
 
   if (len == 0) {
@@ -44,11 +58,13 @@ int main(int argc, char **argv) {
     close(fd);
     return 1;
   }
+  close(fd);
+
+  madvise(data, len, MADV_SEQUENTIAL);
 
   uint64_t hash = rapidhash(data, len);
 
   munmap(data, len);
-  close(fd);
 
   printf("%016" PRIx64 "\n", hash);
   return 0;
