@@ -166,13 +166,15 @@ int main(int argc, char **argv)
   int opt;
   while ((opt = getopt(argc, argv, "j:")) != -1) {
     switch (opt) {
-    case 'j':
-      nthreads = atoi(optarg);
-      if (nthreads < 1) {
-        fprintf(stderr, "rapidhash: -j must be >= 1\n");
+    case 'j': {
+      int n = atoi(optarg);
+      if (n < 0) {
+        fprintf(stderr, "rapidhash: -j must be >= 0\n");
         return 1;
       }
+      nthreads = (n == 0) ? (int)sysconf(_SC_NPROCESSORS_ONLN) : n;
       break;
+    }
     default:
       fprintf(stderr, "Usage: %s [-j threads] <file> [file...]\n", argv[0]);
       return 1;
