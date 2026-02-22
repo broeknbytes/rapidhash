@@ -15,7 +15,7 @@ make install
 To run:
 
 ```sh
-Usage: rapidhash [-j threads] <file> [file...]
+Usage: rapidhash [-j threads] [-s] <file> [file...]
 
 Compute the 64-bit rapidhash of one or more files.
 Output format matches sha256sum: '<hash>  <filename>' per line.
@@ -24,6 +24,7 @@ Options:
   -j <n>   Use <n> worker threads for hashing.
            0 means use all available processors (same as the default).
            1 runs in sequential mode without threading overhead.
+  -s       Print file size in bytes after the filename.
   -h       Show this help and exit.
 
 Threading:
@@ -133,3 +134,30 @@ Summary
     1.53 times faster than fd . -a -t f -e arw -X rapidhash -j 320 1>/dev/null
 ```
 
+### Example 3: Print wasted space due to duplicates
+
+```
+fd . -a -t f -e arw -X rapidhash -j 40 -s | awk -F'\t' ' 
+{
+    hash=$1; file=$2; size=$3
+    count[hash]++
+    files[hash] = files[hash] (count[hash]==1 ? "" : "\n  ") file
+    sizes[hash] = size
+}
+END {
+    total = 0
+    num_files=0
+    total_dupes=0
+    for (hash in count) {
+        if (count[hash] > 1) {
+            wasted = (count[hash]-1) * sizes[hash]
+            total += wasted
+            num_files++
+            total_dupes+=count[hash]
+            printf "dupes: %d  wasted: %.1f MiB  files:\n  %s\n\n", count[hash], wasted/1024/1024, files[hash]
+        }
+    }
+    printf "Total wasted: %.1f MiB\nUnique duplicates: %d\nDuplicate files: %d\nCould remove or symlink %d files\n", total/1024/1024, num_files, total_dupes, total_dupes - num_files
+}
+'
+```
