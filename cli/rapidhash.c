@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 /* Compute the rapidhash of a file.
@@ -66,7 +67,70 @@ static int compute_hash(const char *filename, uint64_t *out, off_t *size_out) {
   return 0;
 }
 
-static int run_sequential(char **files, int nfiles, int show_size) {
+/* Progress reporting */
+
+struct progress_state {
+  int nfiles;
+  _Atomic int done;
+  _Atomic int stop;
+  struct timespec start;
+};
+
+static void print_progress(const struct progress_state *ps) {
+  int done = atomic_load(&ps->done);
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  double elapsed = (now.tv_sec - ps->start.tv_sec) +
+                   (now.tv_nsec - ps->start.tv_nsec) * 1e-9;
+  int pct = (int)(100.0 * done / ps->nfiles);
+
+  if (done > 0 && done < ps->nfiles) {
+    double eta = elapsed / done * (ps->nfiles - done);
+    fprintf(stderr, "\r[elapsed %6.1fs] [%d/%d (%3d%%)] [ETA %6.1fs]   ",
+            elapsed, done, ps->nfiles, pct, eta);
+  } else {
+    fprintf(stderr, "\r[elapsed %6.1fs] [%d/%d (%3d%%)] [ETA       ?]   ",
+            elapsed, done, ps->nfiles, pct);
+  }
+  fflush(stderr);
+}
+
+static void *progress_thread_fn(void *arg) {
+  struct progress_state *ps = arg;
+  struct timespec interval = {1, 0};
+  while (!atomic_load(&ps->stop)) {
+    nanosleep(&interval, NULL);
+    if (!atomic_load(&ps->stop))
+      print_progress(ps);
+  }
+  return NULL;
+}
+
+static int start_progress(struct progress_state *ps, int nfiles,
+                           pthread_t *tid) {
+  ps->nfiles = nfiles;
+  atomic_init(&ps->done, 0);
+  atomic_init(&ps->stop, 0);
+  clock_gettime(CLOCK_MONOTONIC, &ps->start);
+  return pthread_create(tid, NULL, progress_thread_fn, ps);
+}
+
+static void stop_progress(pthread_t tid, struct progress_state *ps) {
+  atomic_store(&ps->stop, 1);
+  pthread_join(tid, NULL);
+  fprintf(stderr, "\r\033[K");
+  fflush(stderr);
+}
+
+static int run_sequential(char **files, int nfiles, int show_size,
+                           int show_progress) {
+  struct progress_state ps;
+  pthread_t ptid;
+  if (show_progress) {
+    if (start_progress(&ps, nfiles, &ptid) != 0)
+      show_progress = 0;
+  }
+
   int exit_code = 0;
   for (int i = 0; i < nfiles; i++) {
     uint64_t hash;
@@ -79,7 +143,13 @@ static int run_sequential(char **files, int nfiles, int show_size) {
     } else {
       printf("%016" PRIx64 "\t%s\n", hash, files[i]);
     }
+    if (show_progress)
+      atomic_fetch_add(&ps.done, 1);
   }
+
+  if (show_progress)
+    stop_progress(ptid, &ps);
+
   return exit_code;
 }
 
@@ -91,9 +161,10 @@ struct queue {
   char **files;
   int nfiles;
   int show_size;
-  _Atomic int next;       // Each thread atomically claims the next index
-  _Atomic int exit_code;  // Set to 1 if any file fails
-  pthread_mutex_t out_mu; // Serialise stdout so lines don't interleave
+  _Atomic int next;             // Each thread atomically claims the next index
+  _Atomic int exit_code;        // Set to 1 if any file fails
+  struct progress_state *ps;    // NULL if progress disabled
+  pthread_mutex_t out_mu;       // Serialise stdout so lines don't interleave
 };
 
 static void *worker(void *arg) {
@@ -107,28 +178,40 @@ static void *worker(void *arg) {
     off_t size;
     if (compute_hash(q->files[i], &hash, &size) != 0) {
       atomic_store(&q->exit_code, 1);
-      continue;
+    } else {
+      pthread_mutex_lock(&q->out_mu);
+      if (q->show_size)
+        printf("%016" PRIx64 "\t%s\t%" PRId64 "\n", hash, q->files[i],
+               (int64_t)size);
+      else
+        printf("%016" PRIx64 "\t%s\n", hash, q->files[i]);
+      pthread_mutex_unlock(&q->out_mu);
     }
 
-    pthread_mutex_lock(&q->out_mu);
-    if (q->show_size)
-      printf("%016" PRIx64 "\t%s\t%" PRId64 "\n", hash, q->files[i],
-             (int64_t)size);
-    else
-      printf("%016" PRIx64 "\t%s\n", hash, q->files[i]);
-    pthread_mutex_unlock(&q->out_mu);
+    if (q->ps)
+      atomic_fetch_add(&q->ps->done, 1);
   }
   return NULL;
 }
 
-static int run_threaded(char **files, int nfiles, int nthreads, int show_size) {
+static int run_threaded(char **files, int nfiles, int nthreads, int show_size,
+                         int show_progress) {
   if (nthreads > nfiles)
     nthreads = nfiles;
+
+  struct progress_state ps;
+  pthread_t ptid;
+  int progress_running = 0;
+  if (show_progress) {
+    if (start_progress(&ps, nfiles, &ptid) == 0)
+      progress_running = 1;
+  }
 
   struct queue q;
   q.files = files;
   q.nfiles = nfiles;
   q.show_size = show_size;
+  q.ps = progress_running ? &ps : NULL;
   atomic_init(&q.next, 0);
   atomic_init(&q.exit_code, 0);
   pthread_mutex_init(&q.out_mu, NULL);
@@ -136,6 +219,8 @@ static int run_threaded(char **files, int nfiles, int nthreads, int show_size) {
   pthread_t *threads = malloc((size_t)nthreads * sizeof(pthread_t));
   if (!threads) {
     perror("malloc");
+    if (progress_running)
+      stop_progress(ptid, &ps);
     pthread_mutex_destroy(&q.out_mu);
     return 1;
   }
@@ -146,6 +231,8 @@ static int run_threaded(char **files, int nfiles, int nthreads, int show_size) {
       for (int j = 0; j < i; j++)
         pthread_join(threads[j], NULL);
       free(threads);
+      if (progress_running)
+        stop_progress(ptid, &ps);
       pthread_mutex_destroy(&q.out_mu);
       return 1;
     }
@@ -154,6 +241,9 @@ static int run_threaded(char **files, int nfiles, int nthreads, int show_size) {
   for (int i = 0; i < nthreads; i++)
     pthread_join(threads[i], NULL);
 
+  if (progress_running)
+    stop_progress(ptid, &ps);
+
   free(threads);
   pthread_mutex_destroy(&q.out_mu);
   return atomic_load(&q.exit_code);
@@ -161,7 +251,7 @@ static int run_threaded(char **files, int nfiles, int nthreads, int show_size) {
 
 static void print_help(const char *prog) {
   printf(
-      "Usage: %s [-j threads] [-s] <file> [file...]\n"
+      "Usage: %s [-j threads] [-s] [-p] <file> [file...]\n"
       "\n"
       "Compute the 64-bit rapidhash of one or more files.\n"
       "Output format matches sha256sum: '<hash>  <filename>' per line.\n"
@@ -171,6 +261,7 @@ static void print_help(const char *prog) {
       "           0 means use all available processors (same as the default).\n"
       "           1 runs in sequential mode without threading overhead.\n"
       "  -s       Print file size in bytes after the filename.\n"
+      "  -p       Show progress (elapsed time, ETA, files processed) on stderr.\n"
       "  -h       Show this help and exit.\n"
       "\n"
       "Threading:\n"
@@ -183,9 +274,10 @@ static void print_help(const char *prog) {
 int main(int argc, char **argv) {
   int nthreads = (int)sysconf(_SC_NPROCESSORS_ONLN);
   int show_size = 0;
+  int show_progress = 0;
 
   int opt;
-  while ((opt = getopt(argc, argv, "j:sh")) != -1) {
+  while ((opt = getopt(argc, argv, "j:shp")) != -1) {
     switch (opt) {
     case 'j': {
       int n = atoi(optarg);
@@ -198,6 +290,9 @@ int main(int argc, char **argv) {
     }
     case 's':
       show_size = 1;
+      break;
+    case 'p':
+      show_progress = 1;
       break;
     case 'h':
       print_help(argv[0]);
@@ -218,7 +313,7 @@ int main(int argc, char **argv) {
 
   /* -j 1 or a single file: skip all threading machinery */
   if (nthreads == 1 || nfiles == 1)
-    return run_sequential(files, nfiles, show_size);
+    return run_sequential(files, nfiles, show_size, show_progress);
 
-  return run_threaded(files, nfiles, nthreads, show_size);
+  return run_threaded(files, nfiles, nthreads, show_size, show_progress);
 }
