@@ -5,6 +5,7 @@
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -251,10 +252,14 @@ static int run_threaded(char **files, int nfiles, int nthreads, int show_size,
 
 static void print_help(const char *prog) {
   printf(
-      "Usage: %s [-j threads] [-s] [-p] <file> [file...]\n"
+      "Usage: %s [-j threads] [-s] [-p] [file...]\n"
+      "       find . -name '*.jpg' | %s [-j threads] [-s] [-p]\n"
       "\n"
       "Compute the 64-bit rapidhash of one or more files.\n"
-      "Output format matches sha256sum: '<hash>  <filename>' per line.\n"
+      "Output format: '<hash>\\t<filename>' per line (tab-separated).\n"
+      "\n"
+      "Files are read from stdin (one path per line) when stdin is a pipe;\n"
+      "otherwise they are taken from the command-line arguments.\n"
       "\n"
       "Options:\n"
       "  -j <n>   Use <n> worker threads for hashing.\n"
@@ -268,11 +273,13 @@ static void print_help(const char *prog) {
       "  A single file is always hashed on the calling thread.\n"
       "  With multiple files and no -j flag, all available processors are\n"
       "  used by default (equivalent to -j 0).\n",
-      prog);
+      prog, prog);
 }
 
 int main(int argc, char **argv) {
   int nthreads = (int)sysconf(_SC_NPROCESSORS_ONLN);
+  if (nthreads < 1)
+    nthreads = 1;
   int show_size = 0;
   int show_progress = 0;
 
@@ -280,12 +287,18 @@ int main(int argc, char **argv) {
   while ((opt = getopt(argc, argv, "j:shp")) != -1) {
     switch (opt) {
     case 'j': {
-      int n = atoi(optarg);
-      if (n < 0) {
-        fprintf(stderr, "rapidhash: -j must be >= 0\n");
+      char *end;
+      long n = strtol(optarg, &end, 10);
+      if (*end != '\0' || n < 0) {
+        fprintf(stderr, "rapidhash: -j requires a non-negative integer\n");
         return 1;
       }
-      nthreads = (n == 0) ? (int)sysconf(_SC_NPROCESSORS_ONLN) : n;
+      if (n == 0) {
+        int cpus = (int)sysconf(_SC_NPROCESSORS_ONLN);
+        nthreads = cpus > 0 ? cpus : 1;
+      } else {
+        nthreads = (int)n;
+      }
       break;
     }
     case 's':
@@ -303,17 +316,67 @@ int main(int argc, char **argv) {
     }
   }
 
-  char **files = argv + optind;
-  int nfiles = argc - optind;
+  char **files;
+  int nfiles = 0;
+  char **stdin_files = NULL;
+
+  /* When stdin is a pipe/redirect, read filenames from it (one per line)
+   * and ignore any file arguments. */
+  if (!isatty(STDIN_FILENO)) {
+    int cap = 0;
+    char *line = NULL;
+    size_t linecap = 0;
+    ssize_t linelen;
+
+    while ((linelen = getline(&line, &linecap, stdin)) > 0) {
+      /* Strip trailing newline (and any CR before it). */
+      while (linelen > 0 &&
+             (line[linelen - 1] == '\n' || line[linelen - 1] == '\r'))
+        line[--linelen] = '\0';
+      if (linelen == 0)
+        continue;
+
+      if (nfiles == cap) {
+        cap = cap ? cap * 2 : 64;
+        char **tmp = realloc(stdin_files, (size_t)cap * sizeof(char *));
+        if (!tmp) {
+          perror("realloc");
+          free(line);
+          free(stdin_files);
+          return 1;
+        }
+        stdin_files = tmp;
+      }
+
+      stdin_files[nfiles] = strdup(line);
+      if (!stdin_files[nfiles]) {
+        perror("strdup");
+        free(line);
+        free(stdin_files);
+        return 1;
+      }
+      nfiles++;
+    }
+    free(line);
+    files = stdin_files;
+  } else {
+    files = argv + optind;
+    nfiles = argc - optind;
+  }
 
   if (nfiles < 1) {
     print_help(argv[0]);
+    free(stdin_files);
     return 0;
   }
 
   /* -j 1 or a single file: skip all threading machinery */
+  int rc;
   if (nthreads == 1 || nfiles == 1)
-    return run_sequential(files, nfiles, show_size, show_progress);
+    rc = run_sequential(files, nfiles, show_size, show_progress);
+  else
+    rc = run_threaded(files, nfiles, nthreads, show_size, show_progress);
 
-  return run_threaded(files, nfiles, nthreads, show_size, show_progress);
+  free(stdin_files);
+  return rc;
 }
