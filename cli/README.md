@@ -75,29 +75,59 @@ Summary
 ```
 
 ### Example 2: Medium number of files 340 GB
-Now lets look at a larger sample size of Sony ARW raw files
+This example contains Sony RAW files, that are ~50MB each.
 
-
+#### Total size of files
 Use `find` to list the total size of files
 
 ```
 find "$(PWD)" -type f -iname '*.arw' -print0 | xargs -0 du -b |awk '{sum+=$1; n++} END {print sum/1024/1024/1024 " GB  (" n " files)"}'
 ```
-`340.154 GB  (8961 files)`
+_340.154 GB  (8961 files)_
 
 Or you could use [fd](https://github.com/sharkdp/fd)
 
 ```
-fd . -t f -e arw -X du -b | awk '{sum+=$1; n++} END {print sum/1024/1024/1024 " GB  (" n " files)"}'
+fd . -a -t f -e arw -X du -b | awk '{sum+=$1; n++} END {print sum/1024/1024/1024 " GB  (" n " files)"}'
 ```
-`340.154 GB  (8961 files)`
+_340.154 GB  (8961 files)_
 
-Lets run and time over a bunch of different number of threads to see how it
-performs, we will not --warmup as it runs around a minute each time.
+```
+files=$(fd . -a -tf -earw -X du -b | sort -k1 | uniq -w16 -D | cut -f2)
+```
+
+Lets run and time over a range of threads to see how it performs, we
+will not --warmup as it runs around a minute each time.
 
 ```
 hyperfine -r 1 -L num 0,10,20,40,80,160,320 'fd . -a -t f -e arw -X rapidhash -j {num} 1>/dev/null'
 ```
+
+<details>
+<summary><h4>Finding duplicate files</h4></summary>
+
+We could iterate over all perms for N duplicates, and use `cmp` to
+compare files. The number of checks for N, is `N*(N-1)/2`, thus
+performance can be expected to decrease proportional to $N^2$. Logic
+might be slightly more complex with nested loops and added book
+keeping.
+
+Another thing we might do is on first pass find all files with
+duplicate sizes, then run these through `rapidhash`. In a lot
+of cases it might not make much difference to find files of same size,
+especially RAW files which can all have the same file size. 
+
+The simplest generally is just to compute the hash for all files
+and then later we can run a simple `awk` script to find duplicates.
+
+```
+hyperfine --show-output -r 1 -L num 0,10,20,40,80,160,320 'fd . -a -tf -earw -X du -b | sort -k1 | uniq -w16 -D | cut -f2 | tr "\n" "\0" | xargs -0 rapidhash -j {num} 1>/dev/null'
+```
+
+For the RAW files it made a difference of about 1sec faster as
+duplicate file sizes dominated, leaving only a very small percentage of
+files that were unique. 
+</details>
 
 Results below show that adding more threads `-j 40` (55 sec), than number of actual
 physical cores `-j 0/-j 10` (74 sec), performs the best in this case.
