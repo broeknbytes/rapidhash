@@ -114,46 +114,46 @@ will not --warmup as it runs around a minute each time.
 
 ```sh
 hyperfine -r 1 -L num 0,10,20,40,60,80,160,320 \
-'fd . -a -tf -e arw -X rapidhash -j {num} 1>/dev/null'
+'fd . -a -tf -e arw -X rapidhash -j {num}'
 ```
 
 Results below show that adding more threads `-j 40` (56 sec), than number of actual
 physical cores `-j 0/-j 10` (74 sec), performs the best in this case.
 
 ```
-Benchmark 1: fd . -a -tf -e arw -X rapidhash -j 0 1>/dev/null
+Benchmark 1: fd . -a -tf -e arw -X rapidhash -j 0
   Time (abs ≡):        74.177 s               [User: 24.477 s, System: 90.178 s]
  
-Benchmark 2: fd . -a -tf -e arw -X rapidhash -j 10 1>/dev/null
+Benchmark 2: fd . -a -tf -e arw -X rapidhash -j 10
   Time (abs ≡):        73.968 s               [User: 24.518 s, System: 90.395 s]
  
-Benchmark 3: fd . -a -tf -e arw -X rapidhash -j 20 1>/dev/null
+Benchmark 3: fd . -a -tf -e arw -X rapidhash -j 20
   Time (abs ≡):        60.132 s               [User: 25.788 s, System: 108.421 s]
  
-Benchmark 4: fd . -a -tf -e arw -X rapidhash -j 40 1>/dev/null
+Benchmark 4: fd . -a -tf -e arw -X rapidhash -j 40
   Time (abs ≡):        56.080 s               [User: 28.041 s, System: 163.064 s]
  
-Benchmark 5: fd . -a -tf -e arw -X rapidhash -j 60 1>/dev/null
+Benchmark 5: fd . -a -tf -e arw -X rapidhash -j 60
   Time (abs ≡):        56.110 s               [User: 27.881 s, System: 159.042 s]
  
-Benchmark 6: fd . -a -tf -e arw -X rapidhash -j 80 1>/dev/null
+Benchmark 6: fd . -a -tf -e arw -X rapidhash -j 80
   Time (abs ≡):        56.286 s               [User: 27.979 s, System: 157.176 s]
  
-Benchmark 7: fd . -a -tf -e arw -X rapidhash -j 160 1>/dev/null
+Benchmark 7: fd . -a -tf -e arw -X rapidhash -j 160
   Time (abs ≡):        60.127 s               [User: 28.437 s, System: 206.600 s]
  
-Benchmark 8: fd . -a -tf -e arw -X rapidhash -j 320 1>/dev/null
+Benchmark 8: fd . -a -tf -e arw -X rapidhash -j 320
   Time (abs ≡):        89.913 s               [User: 28.355 s, System: 448.870 s]
  
 Summary
-  fd . -a -tf -e arw -X rapidhash -j 40 1>/dev/null ran
-    1.00 times faster than fd . -a -tf -e arw -X rapidhash -j 60 1>/dev/null
-    1.00 times faster than fd . -a -tf -e arw -X rapidhash -j 80 1>/dev/null
-    1.07 times faster than fd . -a -tf -e arw -X rapidhash -j 160 1>/dev/null
-    1.07 times faster than fd . -a -tf -e arw -X rapidhash -j 20 1>/dev/null
-    1.32 times faster than fd . -a -tf -e arw -X rapidhash -j 10 1>/dev/null
-    1.32 times faster than fd . -a -tf -e arw -X rapidhash -j 0 1>/dev/null
-    1.60 times faster than fd . -a -tf -e arw -X rapidhash -j 320 1>/dev/null
+  fd . -a -tf -e arw -X rapidhash -j 40 ran
+    1.00 times faster than fd . -a -tf -e arw -X rapidhash -j 60
+    1.00 times faster than fd . -a -tf -e arw -X rapidhash -j 80
+    1.07 times faster than fd . -a -tf -e arw -X rapidhash -j 160
+    1.07 times faster than fd . -a -tf -e arw -X rapidhash -j 20
+    1.32 times faster than fd . -a -tf -e arw -X rapidhash -j 10
+    1.32 times faster than fd . -a -tf -e arw -X rapidhash -j 0
+    1.60 times faster than fd . -a -tf -e arw -X rapidhash -j 320
 ```
 <details>
 <summary><h4>Finding duplicate files</h4></summary>
