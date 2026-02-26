@@ -320,9 +320,12 @@ int main(int argc, char **argv) {
   int nfiles = 0;
   char **stdin_files = NULL;
 
-  /* When stdin is a pipe/redirect, read filenames from it (one per line)
-   * and ignore any file arguments. */
-  if (!isatty(STDIN_FILENO)) {
+  /* When stdin is a pipe/redirect and no file arguments were given,
+   * read filenames from it (one per line).  This allows both:
+   *   find . -name '*.jpg' | rapidhash          (stdin mode)
+   *   find . -print0 | xargs -0 rapidhash       (argv mode, stdin=/dev/null)
+   */
+  if (!isatty(STDIN_FILENO) && optind >= argc) {
     int cap = 0;
     char *line = NULL;
     size_t linecap = 0;
